@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sound &amp; Color — hear it, see it</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body {
+    background: #0a0a0f;
+    color: #f4f4f6;
+    overflow: hidden;
+    transition: background 120ms linear;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 90ms linear;
+    background: #0a0a0f;
+  }
+  canvas#viz {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+    mix-blend-mode: overlay;
+    opacity: 0.85;
+  }
+  .panel {
+    position: relative;
+    z-index: 3;
+    text-align: center;
+    padding: 2.2rem 2.6rem;
+    border-radius: 18px;
+    background: rgba(10, 10, 18, 0.55);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 12px 60px rgba(0,0,0,0.45);
+    max-width: min(90vw, 460px);
+  }
+  h1 { font-size: 1.9rem; letter-spacing: -0.02em; margin-bottom: 0.5rem; }
+  h1 .amp { font-weight: 300; opacity: 0.7; }
+  p.sub { opacity: 0.72; font-size: 0.98rem; line-height: 1.5; margin-bottom: 1.6rem; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: #0a0a0f;
+    background: #f4f4f6;
+    border: none;
+    border-radius: 999px;
+    padding: 0.85rem 2rem;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms;
+    box-shadow: 0 6px 24px rgba(255,255,255,0.12);
+  }
+  button:hover { transform: translateY(-1px); box-shadow: 0 10px 32px rgba(255,255,255,0.2); }
+  button:active { transform: translateY(0); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .readout {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 4;
+    display: none;
+    gap: 0.4rem 2.2rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 1rem 1.2rem 1.4rem;
+    font-variant-numeric: tabular-nums;
+    background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
+  }
+  .readout .cell { text-align: center; min-width: 88px; }
+  .readout .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; opacity: 0.6; }
+  .readout .v { font-size: 1.15rem; font-weight: 600; margin-top: 0.15rem; }
+  .swatch {
+    display: inline-block; width: 1.1rem; height: 1.1rem;
+    border-radius: 4px; vertical-align: -0.15rem; margin-right: 0.35rem;
+    border: 1px solid rgba(255,255,255,0.35);
+  }
+  .hint { position: fixed; top: 1rem; left: 0; right: 0; text-align: center; z-index: 4;
+    font-size: 0.85rem; opacity: 0.55; display: none; }
+  .note { margin-top: 1.1rem; font-size: 0.8rem; opacity: 0.5; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <canvas id="viz"></canvas>
+
+  <div class="hint" id="hint">Make some noise — sing, hum, whistle, play music</div>
+
+  <div class="panel" id="panel">
+    <h1>Sound <span class="amp">&amp;</span> Color</h1>
+    <p class="sub">Turn on your microphone and the screen paints itself from what it hears. Pitch becomes hue, loudness becomes brightness, and tone shapes the texture.</p>
+    <button id="startBtn">Start listening</button>
+    <div class="note">Runs entirely in your browser. Audio never leaves your device.</div>
+  </div>
+
+  <div class="readout" id="readout">
+    <div class="cell"><div class="k">Color</div><div class="v"><span class="swatch" id="sw"></span><span id="hex">—</span></div></div>
+    <div class="cell"><div class="k">Pitch</div><div class="v"><span id="note">—</span></div></div>
+    <div class="cell"><div class="k">Frequency</div><div class="v"><span id="freq">—</span> Hz</div></div>
+    <div class="cell"><div class="k">Loudness</div><div class="v"><span id="loud">—</span></div></div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  const stage = document.getElementById("stage");
+  const canvas = document.getElementById("viz");
+  const ctx = canvas.getContext("2d");
+  const startBtn = document.getElementById("startBtn");
+  const panel = document.getElementById("panel");
+  const readout = document.getElementById("readout");
+  const hint = document.getElementById("hint");
+  const els = {
+    hex: document.getElementById("hex"),
+    note: document.getElementById("note"),
+    freq: document.getElementById("freq"),
+    loud: document.getElementById("loud"),
+    sw: document.getElementById("sw"),
+  };
+
+  let audioCtx, analyser, freqData, timeData, micStream, running = false;
+  let hue = 210, sat = 20, light = 6; // smoothed HSL
+
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
+  function resize() {
+    canvas.width = window.innerWidth * devicePixelRatio;
+    canvas.height = window.innerHeight * devicePixelRatio;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // Map a frequency (Hz) to a hue. Low = deep red/violet, high = blue/cyan.
+  // Uses log scale across the musical range ~55Hz (A1) to ~2000Hz.
+  function freqToHue(f) {
+    const min = Math.log2(55), max = Math.log2(2000);
+    let t = (Math.log2(Math.max(f, 20)) - min) / (max - min);
+    t = Math.min(1, Math.max(0, t));
+    // sweep across the spectrum: red -> orange -> yellow -> green -> blue -> violet
+    return 360 * t; // 0..360 (starts red for low, wraps toward red/violet for high)
+  }
+
+  function freqToNote(f) {
+    if (f <= 0) return "—";
+    const midi = Math.round(69 + 12 * Math.log2(f / 440));
+    const name = NOTE_NAMES[((midi % 12) + 12) % 12];
+    const octave = Math.floor(midi / 12) - 1;
+    return name + octave;
+  }
+
+  // Autocorrelation-based pitch detection for a cleaner fundamental.
+  function detectPitch(buf, sampleRate) {
+    const SIZE = buf.length;
+    let rms = 0;
+    for (let i = 0; i < SIZE; i++) { const v = buf[i]; rms += v * v; }
+    rms = Math.sqrt(rms / SIZE);
+    if (rms < 0.008) return { freq: -1, rms };
+
+    let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+    for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+    for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+    const b = buf.slice(r1, r2);
+    const n = b.length;
+    const c = new Array(n).fill(0);
+    for (let lag = 0; lag < n; lag++) {
+      for (let i = 0; i < n - lag; i++) c[lag] += b[i] * b[i + lag];
+    }
+    let d = 0;
+    while (d < n - 1 && c[d] > c[d + 1]) d++;
+    let maxval = -1, maxpos = -1;
+    for (let i = d; i < n; i++) {
+      if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+    }
+    let T0 = maxpos;
+    if (T0 <= 0) return { freq: -1, rms };
+    // parabolic interpolation
+    const x1 = c[T0 - 1] || 0, x2 = c[T0], x3 = c[T0 + 1] || 0;
+    const a = (x1 + x3 - 2 * x2) / 2, bb = (x3 - x1) / 2;
+    if (a) T0 = T0 - bb / (2 * a);
+    return { freq: sampleRate / T0, rms };
+  }
+
+  function draw() {
+    if (!running) return;
+    requestAnimationFrame(draw);
+
+    analyser.getByteFrequencyData(freqData);
+    analyser.getFloatTimeDomainData(timeData);
+
+    // loudness from frequency bins
+    let sum = 0;
+    for (let i = 0; i < freqData.length; i++) sum += freqData[i];
+    const avg = sum / freqData.length;         // 0..255
+    const loudness = Math.min(1, avg / 90);    // normalized
+
+    // spectral centroid -> brightness of tone (for saturation/texture)
+    let num = 0, den = 0;
+    for (let i = 0; i < freqData.length; i++) { num += i * freqData[i]; den += freqData[i]; }
+    const centroid = den ? num / den / freqData.length : 0; // 0..1
+
+    const { freq, rms } = detectPitch(timeData, audioCtx.sampleRate);
+
+    // target HSL
+    let targetHue, targetSat, targetLight;
+    if (freq > 0 && loudness > 0.06) {
+      targetHue = freqToHue(freq);
+      targetSat = 55 + centroid * 45;            // brighter tone -> more saturated
+      targetLight = 12 + loudness * 55;          // louder -> lighter
+    } else {
+      // silence: drift to a calm dark blue
+      targetHue = 215;
+      targetSat = 18;
+      targetLight = 6 + loudness * 8;
+    }
+
+    // smooth
+    const ease = 0.12;
+    let dh = targetHue - hue;
+    if (dh > 180) dh -= 360; if (dh < -180) dh += 360;
+    hue = (hue + dh * ease + 360) % 360;
+    sat += (targetSat - sat) * ease;
+    light += (targetLight - light) * ease;
+
+    const bg = `hsl(${hue.toFixed(0)}, ${sat.toFixed(0)}%, ${light.toFixed(0)}%)`;
+    stage.style.background = bg;
+
+    // waveform overlay
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.strokeStyle = `hsla(${((hue + 40) % 360).toFixed(0)}, 90%, 85%, ${0.25 + loudness * 0.5})`;
+    ctx.beginPath();
+    const mid = canvas.height / 2;
+    const step = canvas.width / timeData.length;
+    for (let i = 0; i < timeData.length; i++) {
+      const x = i * step;
+      const y = mid + timeData[i] * mid * 0.9;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // readout
+    els.hex.textContent = hslToHex(hue, sat, light).toUpperCase();
+    els.sw.style.background = bg;
+    els.note.textContent = freq > 0 ? freqToNote(freq) : "—";
+    els.freq.textContent = freq > 0 ? freq.toFixed(1) : "—";
+    els.loud.textContent = loudness > 0.06 ? Math.round(loudness * 100) + "%" : "quiet";
+  }
+
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => {
+      const c = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      return Math.round(255 * c).toString(16).padStart(2, "0");
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  }
+
+  async function start() {
+    startBtn.disabled = true;
+    startBtn.textContent = "Requesting mic…";
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.6;
+      src.connect(analyser);
+      freqData = new Uint8Array(analyser.frequencyBinCount);
+      timeData = new Float32Array(analyser.fftSize);
+
+      panel.style.display = "none";
+      canvas.style.display = "block";
+      readout.style.display = "flex";
+      hint.style.display = "block";
+      setTimeout(() => { hint.style.display = "none"; }, 5000);
+
+      running = true;
+      draw();
+    } catch (err) {
+      startBtn.disabled = false;
+      startBtn.textContent = "Start listening";
+      panel.querySelector(".sub").textContent =
+        "Couldn't access the microphone (" + (err && err.name ? err.name : "error") +
+        "). Please allow mic permission and try again.";
+    }
+  }
+
+  startBtn.addEventListener("click", start);
+})();
+</script>
+</body>
+</html>
