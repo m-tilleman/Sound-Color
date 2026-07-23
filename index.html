@@ -735,15 +735,23 @@ hub.setAttribute("fill","#ffffff");
 g.appendChild(hub);
 }
 
-/* ---------- Chladni plate (nodal-line simulation) ---------- */
+/* ---------- Chladni plate: animated sand simulation ---------- */
+// Plate mode shape (constrained at centre): χ(x,y)=cos(nπx)cos(mπy)-cos(mπx)cos(nπy).
+// |χ| is the local vibration amplitude — ~0 on the nodal lines, large at antinodes.
+// Sand grains get kicked in proportion to |χ|, so they wander where the plate shakes
+// and come to rest on the still nodal lines, exactly as in the real experiment.
 const chladniCanvas=document.getElementById("chladni");
-const cctx=chladniCanvas?chladniCanvas.getContext("2d",{willReadFrequently:true}):null;
+const cctx=chladniCanvas?chladniCanvas.getContext("2d"):null;
+const CHLADNI_N=3000;               // number of sand grains
+let chladniParticles=null;
+let chladniActive=[];               // [{n,mm,rgb}] one per currently-held note
+let chladniRAF=null;
 
-// a bright version of a note's colour, for the "sand" on the plate
+// a bright version of a note's colour, for the "sand"
 function brightNoteRgb(m){
 const pc=((m%12)+12)%12, oct=Math.floor(m/12)-1;
 const c=noteColor(pc,oct);
-return hslToRgb(c.h, Math.min(100,c.s+8), Math.min(84,c.l+24));
+return hslToRgb(c.h, Math.min(100,c.s+8), Math.min(84,c.l+26));
 }
 // Map a frequency to square-plate mode numbers (n>m>=1).
 // Kirchhoff plate bending waves: resonant frequency ∝ (n^2+m^2),
@@ -757,51 +765,76 @@ if(e<bestErr){bestErr=e;best=[n,mm];}
 }
 return best;
 }
-// Standard square-plate Chladni figure (plate constrained at its centre):
-//   cos(nπx)cos(mπy) - cos(mπx)cos(nπy) = 0  -> sand settles where this is ~0.
-function drawChladni(midis){
+function chladniInit(){
+chladniParticles=new Array(CHLADNI_N);
+for(let i=0;i<CHLADNI_N;i++) chladniParticles[i]={x:Math.random(),y:Math.random(),ni:0};
+}
+function chladniScatter(){ for(const p of chladniParticles){ p.x=Math.random(); p.y=Math.random(); } }
+
+// one physics step of the grains
+function chladniStep(){
+const notes=chladniActive; if(!notes.length) return;
+const PI=Math.PI;
+for(const p of chladniParticles){
+const nd=notes[p.ni]; if(!nd) continue;
+const n=nd.n, mm=nd.mm;
+const snx=Math.sin(n*PI*p.x), smx=Math.sin(mm*PI*p.x);
+const cnx=Math.cos(n*PI*p.x), cmx=Math.cos(mm*PI*p.x);
+const sny=Math.sin(n*PI*p.y), smy=Math.sin(mm*PI*p.y);
+const cny=Math.cos(n*PI*p.y), cmy=Math.cos(mm*PI*p.y);
+const chi=cnx*cmy - cmx*cny;
+const amp=Math.abs(chi)/2;              // 0 on nodes, ~1 at antinodes
+// vibration tosses the grain (random walk scaled by local motion)
+const k=0.05*amp+0.001;
+p.x+=(Math.random()-0.5)*2*k;
+p.y+=(Math.random()-0.5)*2*k;
+// slight drift down the amplitude gradient -> grains settle crisply on the node
+const dchidx=-n*PI*snx*cmy + mm*PI*smx*cny;
+const dchidy=-n*PI*cnx*smy + mm*PI*cmx*sny;
+const g=0.0009*chi;
+p.x-=g*dchidx; p.y-=g*dchidy;
+if(p.x<0.003)p.x=0.003; else if(p.x>0.997)p.x=0.997;
+if(p.y<0.003)p.y=0.003; else if(p.y>0.997)p.y=0.997;
+}
+}
+function chladniPaint(){
 if(!cctx) return;
 const W=chladniCanvas.width, H=chladniCanvas.height;
-const img=cctx.createImageData(W,H);
-const d=img.data;
-for(let i=0;i<d.length;i+=4){ d[i]=8; d[i+1]=9; d[i+2]=13; d[i+3]=255; }
+cctx.globalCompositeOperation="source-over";
+cctx.fillStyle="#06070a"; cctx.fillRect(0,0,W,H);   // blank plate
+if(!chladniActive.length) return;
+cctx.globalCompositeOperation="lighter";
+for(const p of chladniParticles){
+const nd=chladniActive[p.ni]; if(!nd) continue;
+const rgb=nd.rgb;
+cctx.fillStyle="rgba("+rgb[0]+","+rgb[1]+","+rgb[2]+",0.85)";
+cctx.fillRect(p.x*W, p.y*H, 1.6, 1.6);
+}
+cctx.globalCompositeOperation="source-over";
+}
+function chladniLoop(){
+chladniStep();
+chladniPaint();
+chladniRAF=requestAnimationFrame(chladniLoop);
+}
+// called from render() whenever the held-note set changes
+function updateChladni(midis){
+if(!cctx) return;
+if(!chladniParticles) chladniInit();
 const notes=[...new Set(midis)];
-if(notes.length){
-const acc=new Float32Array(W*H*3);
-const sharp=150;            // higher -> thinner, more sand-like nodal lines
-const gain=notes.length>1?0.6:1;   // avoid blowing out to white where chord patterns overlap
-notes.forEach(m=>{
-const mode=chladniMode(midiToFreq(m)), n=mode[0], mm=mode[1];
-const rgb=brightNoteRgb(m).map(v=>v*gain);
-const cnX=new Float64Array(W), cmX=new Float64Array(W);
-for(let px=0;px<W;px++){ const x=px/(W-1); cnX[px]=Math.cos(n*Math.PI*x); cmX[px]=Math.cos(mm*Math.PI*x); }
-const cnY=new Float64Array(H), cmY=new Float64Array(H);
-for(let py=0;py<H;py++){ const y=py/(H-1); cnY[py]=Math.cos(n*Math.PI*y); cmY[py]=Math.cos(mm*Math.PI*y); }
-for(let py=0;py<H;py++){
-const cN=cnY[py], cM=cmY[py], row=py*W;
-for(let px=0;px<W;px++){
-const chi=cnX[px]*cM - cmX[px]*cN;
-const inten=Math.exp(-chi*chi*sharp);
-const i3=(row+px)*3;
-acc[i3]+=rgb[0]*inten; acc[i3+1]+=rgb[1]*inten; acc[i3+2]+=rgb[2]*inten;
-}
-}
-});
-for(let p=0;p<W*H;p++){
-const i4=p*4, i3=p*3;
-d[i4]=Math.min(255,d[i4]+acc[i3]);
-d[i4+1]=Math.min(255,d[i4+1]+acc[i3+1]);
-d[i4+2]=Math.min(255,d[i4+2]+acc[i3+2]);
-}
-}
-cctx.putImageData(img,0,0);
 if(!notes.length){
-cctx.fillStyle="rgba(154,160,173,.55)";
-cctx.font="500 16px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif";
-cctx.textAlign="center"; cctx.textBaseline="middle";
-cctx.fillText("play a note",W/2,H/2);
+chladniActive=[];
+if(chladniRAF){ cancelAnimationFrame(chladniRAF); chladniRAF=null; }
+chladniPaint();                    // blank
+return;
 }
+const startingFromSilence=chladniActive.length===0;
+chladniActive=notes.map(m=>{ const md=chladniMode(midiToFreq(m)); return {n:md[0],mm:md[1],rgb:brightNoteRgb(m)}; });
+for(let i=0;i<CHLADNI_N;i++) chladniParticles[i].ni=i%chladniActive.length;
+if(startingFromSilence) chladniScatter();   // fresh sprinkle of sand when playing begins
+if(!chladniRAF) chladniLoop();
 }
+function drawChladni(midis){ updateChladni(midis); }
 
 /* ---------- Controls ---------- */
 const volEl=document.getElementById("vol");
