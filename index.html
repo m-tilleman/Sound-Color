@@ -143,6 +143,8 @@ aside{display:flex;flex-direction:column;gap:14px;min-height:0;}
 .card h2{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:0 0 12px;font-weight:600;}
 .wheel-wrap{display:flex;justify-content:center;}
 #wheel{max-width:100%;height:auto;}
+.plate-wrap{display:flex;justify-content:center;}
+#chladni{width:100%;max-width:300px;height:auto;aspect-ratio:1/1;border-radius:12px;border:1px solid var(--line);background:#06070a;display:block;}
 .legend-note{font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px;}
 .row{display:flex;align-items:center;gap:10px;margin:10px 0;}
 .row label{font-size:13px;color:var(--text);flex:1;}
@@ -289,6 +291,12 @@ background:rgba(6,7,10,.5);border:1px solid var(--line);border-radius:12px;paddi
 <svg id="wheel" width="230" height="230" viewBox="0 0 230 230"></svg>
 </div>
 <div class="legend-note">Adjacent slices are a fifth apart (C→G→D…). Harmonious notes sit near each other, so chords blend into pleasing colors.</div>
+</div>
+
+<div class="card">
+<h2>Chladni plate</h2>
+<div class="plate-wrap"><canvas id="chladni" width="360" height="360"></canvas></div>
+<div class="legend-note">A simulated Chladni figure — sand settling on the vibration nodes of a square plate driven at its centre (cos&thinsp;<i>nπx</i>&thinsp;cos&thinsp;<i>mπy</i> − cos&thinsp;<i>mπx</i>&thinsp;cos&thinsp;<i>nπy</i> = 0). Higher notes drive higher modes, so more lines appear; each note is drawn in its own colour and chords overlay.</div>
 </div>
 
 <div class="card">
@@ -603,6 +611,7 @@ glow.style.opacity=0;
 labelEl.style.display="none";
 idleEl.style.display="block";
 updateWheelSpokes([]);
+drawChladni([]);
 return;
 }
 idleEl.style.display="none";
@@ -638,6 +647,7 @@ if(chord){ chordNameEl.textContent=chord; chordNameEl.style.display="block"; }
 else { chordNameEl.style.display="none"; }
 stageHex.textContent=hexLabel;
 updateWheelSpokes(midis);
+drawChladni(midis);
 }
 
 /* ---------- Color wheel legend ---------- */
@@ -723,6 +733,74 @@ hub.setAttribute("cx",WHEEL_CX);hub.setAttribute("cy",WHEEL_CY);
 hub.setAttribute("r",isChord?9:3.5);
 hub.setAttribute("fill","#ffffff");
 g.appendChild(hub);
+}
+
+/* ---------- Chladni plate (nodal-line simulation) ---------- */
+const chladniCanvas=document.getElementById("chladni");
+const cctx=chladniCanvas?chladniCanvas.getContext("2d",{willReadFrequently:true}):null;
+
+// a bright version of a note's colour, for the "sand" on the plate
+function brightNoteRgb(m){
+const pc=((m%12)+12)%12, oct=Math.floor(m/12)-1;
+const c=noteColor(pc,oct);
+return hslToRgb(c.h, Math.min(100,c.s+8), Math.min(84,c.l+24));
+}
+// Map a frequency to square-plate mode numbers (n>m>=1).
+// Kirchhoff plate bending waves: resonant frequency ∝ (n^2+m^2),
+// so higher notes drive higher modes and produce more nodal lines.
+function chladniMode(freq){
+const target=Math.max(5, Math.round(freq*0.05));
+let best=[2,1], bestErr=Infinity;
+for(let n=2;n<=9;n++) for(let mm=1;mm<n;mm++){
+const e=Math.abs(n*n+mm*mm-target);
+if(e<bestErr){bestErr=e;best=[n,mm];}
+}
+return best;
+}
+// Standard square-plate Chladni figure (plate constrained at its centre):
+//   cos(nπx)cos(mπy) - cos(mπx)cos(nπy) = 0  -> sand settles where this is ~0.
+function drawChladni(midis){
+if(!cctx) return;
+const W=chladniCanvas.width, H=chladniCanvas.height;
+const img=cctx.createImageData(W,H);
+const d=img.data;
+for(let i=0;i<d.length;i+=4){ d[i]=8; d[i+1]=9; d[i+2]=13; d[i+3]=255; }
+const notes=[...new Set(midis)];
+if(notes.length){
+const acc=new Float32Array(W*H*3);
+const sharp=150;            // higher -> thinner, more sand-like nodal lines
+const gain=notes.length>1?0.6:1;   // avoid blowing out to white where chord patterns overlap
+notes.forEach(m=>{
+const mode=chladniMode(midiToFreq(m)), n=mode[0], mm=mode[1];
+const rgb=brightNoteRgb(m).map(v=>v*gain);
+const cnX=new Float64Array(W), cmX=new Float64Array(W);
+for(let px=0;px<W;px++){ const x=px/(W-1); cnX[px]=Math.cos(n*Math.PI*x); cmX[px]=Math.cos(mm*Math.PI*x); }
+const cnY=new Float64Array(H), cmY=new Float64Array(H);
+for(let py=0;py<H;py++){ const y=py/(H-1); cnY[py]=Math.cos(n*Math.PI*y); cmY[py]=Math.cos(mm*Math.PI*y); }
+for(let py=0;py<H;py++){
+const cN=cnY[py], cM=cmY[py], row=py*W;
+for(let px=0;px<W;px++){
+const chi=cnX[px]*cM - cmX[px]*cN;
+const inten=Math.exp(-chi*chi*sharp);
+const i3=(row+px)*3;
+acc[i3]+=rgb[0]*inten; acc[i3+1]+=rgb[1]*inten; acc[i3+2]+=rgb[2]*inten;
+}
+}
+});
+for(let p=0;p<W*H;p++){
+const i4=p*4, i3=p*3;
+d[i4]=Math.min(255,d[i4]+acc[i3]);
+d[i4+1]=Math.min(255,d[i4+1]+acc[i3+1]);
+d[i4+2]=Math.min(255,d[i4+2]+acc[i3+2]);
+}
+}
+cctx.putImageData(img,0,0);
+if(!notes.length){
+cctx.fillStyle="rgba(154,160,173,.55)";
+cctx.font="500 16px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif";
+cctx.textAlign="center"; cctx.textBaseline="middle";
+cctx.fillText("play a note",W/2,H/2);
+}
 }
 
 /* ---------- Controls ---------- */
