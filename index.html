@@ -602,6 +602,7 @@ stage.style.boxShadow="none";
 glow.style.opacity=0;
 labelEl.style.display="none";
 idleEl.style.display="block";
+updateWheelSpokes([]);
 return;
 }
 idleEl.style.display="none";
@@ -636,6 +637,7 @@ const chord=detectChordName(midis);
 if(chord){ chordNameEl.textContent=chord; chordNameEl.style.display="block"; }
 else { chordNameEl.style.display="none"; }
 stageHex.textContent=hexLabel;
+updateWheelSpokes(midis);
 }
 
 /* ---------- Color wheel legend ---------- */
@@ -670,6 +672,54 @@ t.setAttribute("fill", light>55?"#0d0e12":"#ffffff");
 t.textContent=NOTE_NAMES[pc];
 svg.appendChild(t);
 }
+// group that holds the "spokes" from the hub out to each played note (on top of slices)
+const lines=document.createElementNS("http://www.w3.org/2000/svg","g");
+lines.setAttribute("id","wheelLines");
+svg.appendChild(lines);
+}
+
+// Draw a spoke from the wheel hub to each currently-played note's slice.
+// Lines meet at the center; when the held notes form a chord they get bolder + brighter.
+const WHEEL_CX=115, WHEEL_CY=115, WHEEL_RIN=58;
+function noteAngle(pc){ const pos=(((pc*7)%12)+12)%12; return (pos/12)*2*Math.PI - Math.PI/2; }
+function updateWheelSpokes(midis){
+const g=document.getElementById("wheelLines");
+if(!g) return;
+g.innerHTML="";
+const pcs=[...new Set(midis.map(m=>((m%12)+12)%12))];
+if(pcs.length===0) return;
+const NS="http://www.w3.org/2000/svg";
+const isChord=detectChordName(midis)!==null;
+const w=isChord?4.5:2.2;               // bolder for a recognised chord
+const coreAlpha=isChord?1:0.9;
+pcs.forEach(pc=>{
+const a=noteAngle(pc);
+const x=WHEEL_CX+WHEEL_RIN*Math.cos(a), y=WHEEL_CY+WHEEL_RIN*Math.sin(a);
+// soft colored glow in the note's own hue
+const glow=document.createElementNS(NS,"line");
+glow.setAttribute("x1",WHEEL_CX);glow.setAttribute("y1",WHEEL_CY);
+glow.setAttribute("x2",x);glow.setAttribute("y2",y);
+glow.setAttribute("stroke",hslStr(noteColor(pc,4)));
+glow.setAttribute("stroke-width",w+4);
+glow.setAttribute("stroke-linecap","round");
+glow.setAttribute("stroke-opacity",isChord?0.65:0.4);
+g.appendChild(glow);
+// crisp white core
+const core=document.createElementNS(NS,"line");
+core.setAttribute("x1",WHEEL_CX);core.setAttribute("y1",WHEEL_CY);
+core.setAttribute("x2",x);core.setAttribute("y2",y);
+core.setAttribute("stroke","#ffffff");
+core.setAttribute("stroke-width",w);
+core.setAttribute("stroke-linecap","round");
+core.setAttribute("stroke-opacity",coreAlpha);
+g.appendChild(core);
+});
+// hub where the spokes meet
+const hub=document.createElementNS(NS,"circle");
+hub.setAttribute("cx",WHEEL_CX);hub.setAttribute("cy",WHEEL_CY);
+hub.setAttribute("r",isChord?5:3.5);
+hub.setAttribute("fill","#ffffff");
+g.appendChild(hub);
 }
 
 /* ---------- Controls ---------- */
