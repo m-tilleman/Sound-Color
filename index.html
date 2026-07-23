@@ -45,9 +45,11 @@ gap:18px;
 padding:0 24px 18px;
 min-height:0;
 }
-@media (max-width:900px){ main{grid-template-columns:1fr;} }
-main.panel-hidden{grid-template-columns:1fr;}
+@media (max-width:900px){ main{grid-template-columns:minmax(0,1fr);} }
+main.panel-hidden{grid-template-columns:minmax(0,1fr);}
 main.panel-hidden aside{display:none;}
+/* let grid/flex children shrink below content width so the piano scrolls instead of overflowing */
+.stage-wrap,aside,.piano-panel,main>*{min-width:0;}
 
 /* Color stage */
 .stage-wrap{display:flex;flex-direction:column;gap:14px;min-height:0;}
@@ -211,14 +213,15 @@ background:rgba(6,7,10,.5);border:1px solid var(--line);border-radius:12px;paddi
   .tabs{order:2;flex-basis:100%;margin-left:0;}
   #togglePanel{margin-left:auto;order:1;}
 
+  html,body{overflow-x:hidden;}   /* belt-and-suspenders against horizontal scroll */
   main{
-    grid-template-columns:1fr;
+    grid-template-columns:minmax(0,1fr);
     padding:0 16px 16px;
     gap:14px;
     min-height:auto;      /* let content flow & scroll instead of filling the screen */
   }
   .stage-wrap{flex:initial;}
-  .stage{flex:initial;height:42vh;min-height:200px;}   /* keep the stage a sensible size, not full-screen */
+  .stage{flex:initial;height:38vh;min-height:190px;}   /* keep the stage a sensible size, not full-screen */
 
   .card{padding:14px;}
   .row label{font-size:14px;}
