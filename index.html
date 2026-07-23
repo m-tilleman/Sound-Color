@@ -695,20 +695,23 @@ const coreAlpha=isChord?1:0.9;
 pcs.forEach(pc=>{
 const a=noteAngle(pc);
 const x=WHEEL_CX+WHEEL_RIN*Math.cos(a), y=WHEEL_CY+WHEEL_RIN*Math.sin(a);
-// soft colored glow in the note's own hue
+const c=noteColor(pc,4);
+const noteCol=hslStr(c);
+const brightCol=`hsl(${c.h.toFixed(0)} ${Math.min(100,c.s+8).toFixed(0)}% ${Math.min(90,c.l+22).toFixed(0)}%)`;
+// soft glow in the note's own hue
 const glow=document.createElementNS(NS,"line");
 glow.setAttribute("x1",WHEEL_CX);glow.setAttribute("y1",WHEEL_CY);
 glow.setAttribute("x2",x);glow.setAttribute("y2",y);
-glow.setAttribute("stroke",hslStr(noteColor(pc,4)));
+glow.setAttribute("stroke",noteCol);
 glow.setAttribute("stroke-width",w+4);
 glow.setAttribute("stroke-linecap","round");
-glow.setAttribute("stroke-opacity",isChord?0.65:0.4);
+glow.setAttribute("stroke-opacity",isChord?0.5:0.3);
 g.appendChild(glow);
-// crisp white core
+// main line in the note's own color
 const core=document.createElementNS(NS,"line");
 core.setAttribute("x1",WHEEL_CX);core.setAttribute("y1",WHEEL_CY);
 core.setAttribute("x2",x);core.setAttribute("y2",y);
-core.setAttribute("stroke","#ffffff");
+core.setAttribute("stroke",brightCol);
 core.setAttribute("stroke-width",w);
 core.setAttribute("stroke-linecap","round");
 core.setAttribute("stroke-opacity",coreAlpha);
@@ -717,7 +720,7 @@ g.appendChild(core);
 // hub where the spokes meet
 const hub=document.createElementNS(NS,"circle");
 hub.setAttribute("cx",WHEEL_CX);hub.setAttribute("cy",WHEEL_CY);
-hub.setAttribute("r",isChord?5:3.5);
+hub.setAttribute("r",isChord?9:3.5);
 hub.setAttribute("fill","#ffffff");
 g.appendChild(hub);
 }
